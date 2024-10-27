@@ -4,13 +4,16 @@ import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 from gplearn.genetic import SymbolicRegressor
 from FunctionsM import *
+
 from scipy.stats import pearsonr
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import MinMaxScaler
 import seaborn as sns
 from sklearn.metrics import mean_squared_error
-
+from sklearn.metrics import cohen_kappa_score, confusion_matrix
+import matplotlib
+matplotlib.use('Agg')
 # Read the Excel file
 FileDirectory = "C:/Users/alper/Downloads/6 aylık lipit.xlsx"
 result_df = pd.read_excel(FileDirectory, usecols='G, F, Q, R')
@@ -126,8 +129,6 @@ xhun = np.arange(1, 1001)
 indices = np.arange(len(LDL))
 
 # Set seed for reproducibility
-np.random.seed(35)
-
 sample_indices = np.random.choice(indices, size=1000, replace=False)
 sorted_sample_indices = np.sort(sample_indices)
 
@@ -158,6 +159,25 @@ print(f"Friedewald mean squared error: {mean_squared_error(LDL, Friedewald):.2f}
 print(f"Sampson mean squared error: {mean_squared_error(LDL, Sampson):.2f}")
 print(f"Yayla mean squared error: {mean_squared_error(LDL, Yayla):.2f}")
 print(f"Martin-Hopkins mean squared error: {mean_squared_error(LDL, Martin):.2f}")
+
+
+def set_publication_quality():
+    """Set publication quality parameters for matplotlib"""
+    import matplotlib.pyplot as plt
+    from matplotlib import rcParams
+
+    rcParams['font.family'] = 'Arial'  # Standard font for publications
+    rcParams['font.size'] = 8  # Standard font size
+    rcParams['axes.linewidth'] = 1  # Frame width
+    rcParams['xtick.major.width'] = 1  # Tick width
+    rcParams['ytick.major.width'] = 1
+    rcParams['xtick.labelsize'] = 8
+    rcParams['ytick.labelsize'] = 8
+    rcParams['axes.labelsize'] = 10
+    rcParams['legend.fontsize'] = 8
+    rcParams['figure.dpi'] = 300
+    rcParams['savefig.dpi'] = 300
+    rcParams['savefig.format'] = 'tiff'
 
 errorsYayla = Yayla - LDL
 errorsFriedewald = Friedewald - LDL
@@ -388,3 +408,356 @@ bland_altman(LDL, Friedewald, 'F-LDL-C')
 
 bland_altman(LDL, Martin, 'EM-LDL-C')
 
+
+def analyze_ldl_classification(LDL, Friedewald, Yayla, Sampson, Martin):
+    """Calculate classification metrics for all methods"""
+
+    def get_ldl_group(value):
+        if value < 70:
+            return 0  # 'LDL<70'
+        elif value < 100:
+            return 1  # '70≤LDL<100'
+        elif value < 130:
+            return 2  # '100≤LDL<130'
+        elif value < 160:
+            return 3  # '130≤LDL<160'
+        elif value < 190:
+            return 4  # '160≤LDL<190'
+        else:
+            return 5  # 'LDL≥190'
+
+    # Convert actual LDL values to groups
+    true_groups = np.array([get_ldl_group(x) for x in LDL])
+
+    # Convert predicted values to groups
+    methods = {
+        'Friedewald': Friedewald,
+        'Yayla': Yayla,
+        'Sampson': Sampson,
+        'Martin': Martin
+    }
+
+    results = {}
+    for method_name, predictions in methods.items():
+        pred_groups = np.array([get_ldl_group(x) for x in predictions])
+
+        # Calculate Cohen's Kappa
+        kappa = cohen_kappa_score(true_groups, pred_groups)
+
+        # Calculate confusion matrix
+        conf_matrix = confusion_matrix(true_groups, pred_groups)
+
+        results[method_name] = {
+            'kappa': kappa,
+            'confusion_matrix': conf_matrix
+        }
+
+    return results
+
+
+def plot_kappa_scores(results):
+    """Plot Cohen's Kappa scores"""
+    plt.figure(figsize=(10, 6))
+    methods = list(results.keys())
+    kappa_scores = [results[method]['kappa'] for method in methods]
+
+    bars = plt.bar(methods, kappa_scores)
+
+    # Customize plot
+    plt.title("Cohen's Kappa Scores for Different Methods", fontsize=12)
+    plt.ylabel("Kappa Score")
+    plt.ylim(0, 1)
+
+    # Add value labels on bars
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width() / 2., height,
+                 f'{height:.3f}',
+                 ha='center', va='bottom')
+
+    # Add grid
+    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+
+    # Add interpretation guide
+    interpretation_text = """
+    Kappa Interpretation:
+    < 0.00: Poor
+    0.00-0.20: Slight
+    0.21-0.40: Fair
+    0.41-0.60: Moderate
+    0.61-0.80: Substantial
+    0.81-1.00: Almost Perfect
+    """
+    plt.figtext(1.02, 0.5, interpretation_text, fontsize=8, va='center')
+
+    plt.tight_layout()
+    plt.savefig('cohens_kappa_comparison.png', bbox_inches='tight', dpi=300)
+    plt.close()
+
+
+def plot_confusion_matrices(results):
+    """Plot confusion matrices for all methods"""
+    fig, axes = plt.subplots(2, 2, figsize=(15, 15))
+    axes = axes.ravel()
+
+    group_labels = ['LDL<70', '70≤LDL<100', '100≤LDL<130',
+                    '130≤LDL<160', '160≤LDL<190', 'LDL≥190']
+
+    for idx, (method, results) in enumerate(results.items()):
+        conf_matrix = results['confusion_matrix']
+
+        # Calculate percentages
+        conf_matrix_pct = (conf_matrix.T / conf_matrix.sum(axis=1)).T * 100
+
+        sns.heatmap(conf_matrix_pct,
+                    annot=True,
+                    fmt='.1f',
+                    cmap='Blues',
+                    xticklabels=group_labels,
+                    yticklabels=group_labels,
+                    ax=axes[idx])
+
+        axes[idx].set_title(f'{method} Confusion Matrix (%)')
+        axes[idx].set_ylabel('True Group')
+        axes[idx].set_xlabel('Predicted Group')
+
+    plt.tight_layout()
+    plt.savefig('confusion_matrices.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+# After your existing analysis, add these lines:
+# Calculate classification metrics
+classification_results = analyze_ldl_classification(LDL, Friedewald, Yayla, Sampson, Martin)
+
+# Plot Kappa scores
+plot_kappa_scores(classification_results)
+
+# Plot confusion matrices
+plot_confusion_matrices(classification_results)
+
+# Print detailed results
+print("\nCohen's Kappa Scores:")
+for method, results in classification_results.items():
+    print(f"{method}: {results['kappa']:.3f}")
+
+
+
+
+
+def calculate_both_weighted_kappas(true_groups, pred_groups):
+    """
+    Calculate both linear and quadratic weighted kappa
+    """
+    linear_kappa = cohen_kappa_score(true_groups, pred_groups, weights='linear')
+    quadratic_kappa = cohen_kappa_score(true_groups, pred_groups, weights='quadratic')
+    return linear_kappa, quadratic_kappa
+
+
+def analyze_ldl_classification_both_kappas(LDL, Friedewald, Sampson, Martin, Yayla):
+    """Calculate both types of weighted kappa for all methods in specific order"""
+
+    def get_ldl_group(value):
+        if value < 70:
+            return 0
+        elif value < 100:
+            return 1
+        elif value < 130:
+            return 2
+        elif value < 160:
+            return 3
+        elif value < 190:
+            return 4
+        else:
+            return 5
+
+    # Convert values to groups
+    true_groups = np.array([get_ldl_group(x) for x in LDL])
+
+    # Define methods in desired order
+    methods = {
+        'Friedewald': Friedewald,
+        'Sampson': Sampson,
+        'Martin': Martin,
+        'Yayla': Yayla
+    }
+
+    results = {}
+    for method_name, predictions in methods.items():
+        pred_groups = np.array([get_ldl_group(x) for x in predictions])
+        linear_k = cohen_kappa_score(true_groups, pred_groups, weights='linear')
+        quadratic_k = cohen_kappa_score(true_groups, pred_groups, weights='quadratic')
+
+        results[method_name] = {
+            'linear_kappa': linear_k,
+            'quadratic_kappa': quadratic_k
+        }
+
+    return results
+
+
+# Calculate kappa scores
+kappa_results = analyze_ldl_classification_both_kappas(LDL, Friedewald, Sampson, Martin, Yayla)
+
+# Print results
+print("\nDetailed Kappa Analysis Results:")
+print("-" * 50)
+for method, results in kappa_results.items():
+    print(f"\n{method}:")
+    print(f"Linear Weighted Kappa: {results['linear_kappa']:.3f}")
+    print(f"Quadratic Weighted Kappa: {results['quadratic_kappa']:.3f}")
+
+# Create figure and axis
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# Choose your preferred color scheme by uncommenting one of these options:
+
+# Option 1: Orange-Green
+colors = ['#ff9f43', '#10ac84']  # Warm orange and forest green
+
+# Option 2: Blue tones
+# colors = ['#2e86de', '#48dbfb']  # Deep blue and light blue
+
+# Option 3: Orange-Blue
+# colors = ['#ff9f43', '#2e86de']  # Warm orange and deep blue
+
+bar_width = 0.35
+opacity = 0.8
+
+# Prepare data
+methods = list(kappa_results.keys())
+linear_kappas = [results['linear_kappa'] for results in kappa_results.values()]
+quadratic_kappas = [results['quadratic_kappa'] for results in kappa_results.values()]
+
+# Create bars
+x = np.arange(len(methods))
+rects1 = ax.bar(x - bar_width / 2, linear_kappas, bar_width,
+                color='aquamarine', alpha=opacity, label='Linear Weighted Kappa',
+                edgecolor='black', linewidth=1)
+rects2 = ax.bar(x + bar_width / 2, quadratic_kappas, bar_width,
+                color='tomato', alpha=opacity, label='Quadratic Weighted Kappa',
+                edgecolor='black', linewidth=1)
+
+# Customize plot
+ax.set_ylabel('Kappa Score', fontsize=12, fontweight='bold')
+ax.set_xlabel('Methods', fontsize=12, fontweight='bold')
+ax.set_title('Comparison of Weighted Kappa Scores',
+             fontsize=14, fontweight='bold', pad=20)
+ax.set_xticks(x)
+ax.set_xticklabels(methods, fontsize=10, fontweight='bold')
+
+# Set y-axis limits with some padding
+ax.set_ylim(0, max(max(linear_kappas), max(quadratic_kappas)) + 0.1)
+
+
+# Add value labels
+def add_value_labels(rects):
+    for rect in rects:
+        height = rect.get_height()
+        ax.annotate(f'{height:.3f}',
+                    xy=(rect.get_x() + rect.get_width() / 2, height),
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                    ha='center', va='bottom',
+                    fontsize=9, fontweight='bold')
+
+
+add_value_labels(rects1)
+add_value_labels(rects2)
+
+# Add grid
+ax.yaxis.grid(True, linestyle='--', alpha=0.7, color='gray')
+ax.set_axisbelow(True)
+
+# Customize legend
+ax.legend(fontsize=10, loc='upper left')
+
+# Set background color
+ax.set_facecolor('#f8f9fa')
+fig.patch.set_facecolor('white')
+
+# Adjust layout
+plt.tight_layout()
+
+# Save plot with high resolution (300 DPI for publication quality)
+plt.savefig('weighted_kappa_comparison.png', dpi=300, bbox_inches='tight', facecolor='white')
+plt.close()
+
+
+def create_publication_kappa_plot(kappa_results, save_path='kappa_comparison', single_column=True):
+    """Create publication-quality kappa comparison plot"""
+
+    # Set style for publication
+    set_publication_quality()
+
+    # Set figure size based on journal column width
+    if single_column:
+        fig_width = 3.5  # inches - single column
+    else:
+        fig_width = 7.2  # inches - double column
+
+    fig_height = fig_width * 0.75  # Maintain aspect ratio
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    # Prepare data
+    methods = list(kappa_results.keys())
+    linear_kappas = [results['linear_kappa'] for results in kappa_results.values()]
+    quadratic_kappas = [results['quadratic_kappa'] for results in kappa_results.values()]
+
+    # Plot settings
+    bar_width = 0.35
+    opacity = 0.8
+    colors = ['#2ecc71', '#3498db']
+
+    # Create bars
+    x = np.arange(len(methods))
+    rects1 = ax.bar(x - bar_width / 2, linear_kappas, bar_width,
+                    color=colors[0], alpha=opacity, label='Linear Weighted',
+                    edgecolor='black', linewidth=0.5)
+    rects2 = ax.bar(x + bar_width / 2, quadratic_kappas, bar_width,
+                    color=colors[1], alpha=opacity, label='Quadratic Weighted',
+                    edgecolor='black', linewidth=0.5)
+
+    # Customize plot
+    ax.set_ylabel('Kappa Score')
+    ax.set_xlabel('Methods')
+    ax.set_xticks(x)
+    ax.set_xticklabels(methods)
+
+    # Add value labels
+    def add_value_labels(rects):
+        for rect in rects:
+            height = rect.get_height()
+            ax.annotate(f'{height:.3f}',
+                        xy=(rect.get_x() + rect.get_width() / 2, height),
+                        xytext=(0, 2),
+                        textcoords="offset points",
+                        ha='center', va='bottom',
+                        fontsize=7)
+
+    add_value_labels(rects1)
+    add_value_labels(rects2)
+
+    # Grid and legend
+    ax.yaxis.grid(True, linestyle='--', alpha=0.7, color='gray', linewidth=0.5)
+    ax.set_axisbelow(True)
+    ax.legend(frameon=False)
+
+    # Tight layout
+    plt.tight_layout()
+
+    # Save in different formats
+    # TIFF for print
+    plt.savefig(f'{save_path}.tiff', dpi=300, bbox_inches='tight', format='tiff')
+    # PNG for presentations/web
+    plt.savefig(f'{save_path}.png', dpi=300, bbox_inches='tight', format='png')
+    # EPS/PDF for vector graphics
+    plt.savefig(f'{save_path}.pdf', bbox_inches='tight', format='pdf')
+
+    plt.close()
+
+
+# Use the function
+create_publication_kappa_plot(kappa_results, save_path='kappa_comparison_publication', single_column=True)
